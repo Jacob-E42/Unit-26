@@ -17,6 +17,27 @@
             <span class="text-muted">{{ message.timestamp.strftime('%d %B %Y') }}</span>
             <p>{{ message.text }}</p>
           </div>
+          {%if not message in (g.user.likes)%}
+          <form method="POST" action="/users/add_like/{{ message.id }}" id="messages-form">
+            <button class="
+              btn 
+              btn-sm 
+              {{'btn-primary' if message in g.user.likes else 'btn-secondary'}}"
+            >
+              <i class="fa fa-thumbs-up"></i> 
+            </button>
+          </form>
+          {%else%}
+          <form method="POST" action="/users/remove_like/{{ message.id }}" id="messages-form">
+            <button class="
+              btn 
+              btn-sm 
+              {{'btn-primary' if message in g.user.likes else 'btn-secondary'}}"
+            >
+              <i class="fa fa-thumbs-up"></i> 
+            </button>
+          </form>
+          {%endif%}
         </li>
 
       {% endfor %}

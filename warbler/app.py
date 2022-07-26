@@ -3,9 +3,8 @@ import os
 from flask import Flask, render_template, request, flash, redirect, session, g
 from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
-
-from forms import UserAddForm, LoginForm, MessageForm
-from models import db, connect_db, User, Message
+from forms import UserAddForm, LoginForm, MessageForm, ProfileForm
+from models import db, connect_db, User, Message, Likes, Follows
 
 CURR_USER_KEY = "curr_user"
 
@@ -18,9 +17,10 @@ app.config['SQLALCHEMY_DATABASE_URI'] = (
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False
-app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = True
+app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = False
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', "it's a secret")
 toolbar = DebugToolbarExtension(app)
+
 
 connect_db(app)
 
@@ -102,6 +102,7 @@ def login():
         if user:
             do_login(user)
             flash(f"Hello, {user.username}!", "success")
+
             return redirect("/")
 
         flash("Invalid credentials.", 'danger')
@@ -113,7 +114,9 @@ def login():
 def logout():
     """Handle logout of user."""
 
-    # IMPLEMENT THIS
+    do_logout()
+    flash("Logged out!", 'success')
+    return redirect("/login")
 
 
 ##############################################################################
@@ -207,11 +210,76 @@ def stop_following(follow_id):
     return redirect(f"/users/{g.user.id}/following")
 
 
+@app.route('/users/add_like/<int:message_id>', methods=["POST"])
+def add_like(message_id):
+
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    user = g.user
+    msg = Message.query.get_or_404(message_id)
+
+    if msg.user == user:
+        return redirect("/")
+
+    user.likes.append(msg)
+    db.session.commit()
+    return redirect(f"/users/{user.id}/likes")
+
+
+@app.route('/users/remove_like/<int:message_id>', methods=["POST"])
+def remove_like(message_id):
+
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    user = g.user
+    msg = Message.query.get_or_404(message_id)
+
+    user.likes.remove(msg)
+    db.session.commit()
+    return redirect(f"/users/{user.id}/likes")
+
+
+@app.route('/users/<int:user_id>/likes')
+def show_liked_messages(user_id):
+
+    user = User.query.get_or_404(user_id)
+    likes = user.likes
+
+    return render_template('users/likes.html', user=user, likes=likes)
+
+
 @app.route('/users/profile', methods=["GET", "POST"])
 def profile():
     """Update profile for current user."""
 
-    # IMPLEMENT THIS
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    user = g.user
+    form = ProfileForm(obj=user)
+
+    if form.validate_on_submit():
+
+        if User.authenticate(form.username.data, form.password.data):
+            user.image_url = form.image_url.data
+            user.header_image_url = form.header_image_url.data
+            user.email = form.email.data
+            user.username = form.username.data
+            user.bio = form.bio.data
+            db.session.add(user)
+            db.session.commit()
+            flash("Profile edited!", 'success')
+            return redirect(f"/users/{user.id}")
+        else:
+            flash("That is not the correct password", "danger")
+            return redirect("/")
+    else:
+        return render_template("users/edit.html", form=form, user=user)
 
 
 @app.route('/users/delete', methods=["POST"])
@@ -260,23 +328,26 @@ def messages_add():
 def messages_show(message_id):
     """Show a message."""
 
-    msg = Message.query.get(message_id)
+    msg = Message.query.get_or_404(message_id)
     return render_template('messages/show.html', message=msg)
 
 
 @app.route('/messages/<int:message_id>/delete', methods=["POST"])
 def messages_destroy(message_id):
     """Delete a message."""
-
-    if not g.user:
+    msg = Message.query.get(message_id)
+    print("me", g.user, "msg owner", msg.user)
+    if not g.user or g.user != msg.user:
         flash("Access unauthorized.", "danger")
         return redirect("/")
 
-    msg = Message.query.get(message_id)
     db.session.delete(msg)
     db.session.commit()
 
     return redirect(f"/users/{g.user.id}")
+
+#############################################################################
+# Like routes
 
 
 ##############################################################################
@@ -292,8 +363,10 @@ def homepage():
     """
 
     if g.user:
+        all_ids = [f.id for f in g.user.following] + [g.user.id]
         messages = (Message
                     .query
+                    .filter(Message.user_id.in_(all_ids))
                     .order_by(Message.timestamp.desc())
                     .limit(100)
                     .all())
